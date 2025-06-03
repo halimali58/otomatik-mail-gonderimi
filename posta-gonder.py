@@ -409,6 +409,7 @@ def get_signals(df, minConfirmBars=2, maxConfirmBars=5, prev_al_price=None, prev
 # E-posta gönderme fonksiyonu
 def send_email(excel_file_name):
     try:
+        print(f"E-posta gönderiliyor: {excel_file_name} -> {RECIPIENT_EMAIL}")  # Log ekle
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
         msg['To'] = RECIPIENT_EMAIL
@@ -427,13 +428,16 @@ def send_email(excel_file_name):
 
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
+        print("SMTP bağlantısı kuruldu, login deneniyor...")  # Log ekle
         server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        print("SMTP login başarılı, e-posta gönderiliyor...")  # Log ekle
         text = msg.as_string()
         server.sendmail(EMAIL_ADDRESS, RECIPIENT_EMAIL, text)
         server.quit()
         print(f"✅ {excel_file_name} dosyası {RECIPIENT_EMAIL} adresine başarıyla gönderildi.")
     except Exception as e:
         print(f"⚠️ E-posta gönderilirken hata: {e}")
+        raise  # Hatanın loglara yazılmasını sağla
 
 # Excel dosyası indirme bağlantısı
 def provide_download_link(excel_file_name):
