@@ -447,18 +447,20 @@ def provide_download_link(excel_file_name):
 # Excel dosyası oluşturma ve biçimlendirme
 def run_analysis():
     now = datetime.now(turkey_tz)
-    if now.weekday() >= 5 or now.hour < 9 or now.hour >= 18:  # Borsa saatleri: 09:00-18:00
-        print(f"[UYARI] Şu an ({now.strftime('%d-%m-%Y %H:%M')}) borsa kapalı. Veri çekilmedi.")
+    if now.weekday() >= 5 or now.hour < 9 or now.hour >= 18:
+        print(f"[UYARI] Şu an ({now.strftime('%d-%m-%Y %H:%M')}) borsa kapalı. İşlem yapılmadı.")
         return
 
-    if datetime.now(turkey_tz).weekday() >= 5:
-        print(f"[UYARI] Bugün ({now}) hafta sonu. Borsalar kapalı olabilir, veri çekimi sınırlı olabilir.")
+    now_file = datetime.now(turkey_tz).strftime("%d-%m-%Y_%H.%M")
+    excel_file_name = f"Dip_Tepe_Tarama_Tum_Zamanlar_{now_file}.xlsx"
+    now_str = now.strftime("%d-%m-%Y %H:%M")
 
     any_signals = False
     try:
+        print(f"Excel dosyası oluşturuluyor: {excel_file_name}")
         with pd.ExcelWriter(excel_file_name, engine='openpyxl') as writer:
             for tf, period in timeframes.items():
-                print(f"\n📈 {timeframes_tr[tf]} Zaman Dilimi - SİNYALLER ({now})\n")
+                print(f"\n📈 {timeframes_tr[tf]} Zaman Dilimi - SİNYALLER ({now_str})\n")
                 buy_rows = []
                 sell_rows = []
 
@@ -469,21 +471,16 @@ def run_analysis():
                             df = get_2h_data(sym, period=period)
                         else:
                             df = yf.download(sym, period=period, interval=tf, progress=False, auto_adjust=False, timeout=30)
-
                         if df is None or df.empty or len(df) < 60:
                             print(f"[UYARI] {sym} için yeterli veri yok (uzunluk: {len(df) if df is not None else 0}).")
                             continue
                         df['Symbol'] = sym.replace('.IS', '')
                         df.index = pd.to_datetime(df.index, utc=True).tz_convert('Europe/Istanbul')
-
                         df = compute_supertrend(df, atr_period=10, factor=3.0, atrline=1.5)
-
                         prev_al_price, prev_sat_price = get_previous_signals(df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars)
-
                         buy_signal, sell_signal, buy_row, sell_row, alarm_color = get_signals(
                             df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars,
                             prev_al_price=prev_al_price, prev_sat_price=prev_sat_price, proximity_threshold=0.02)
-
                         if buy_row:
                             buy_rows.append(buy_row)
                             print(f"📈 AL Sinyali: {buy_signal}")
@@ -492,9 +489,39 @@ def run_analysis():
                             sell_rows.append(sell_row)
                             print(f"📉 SAT Sinyali: {sell_signal}")
                             any_signals = True
-
                     except Exception as e:
                         print(f"[HATA] {sym} {tf} veri işlenirken hata: {e}")
+                        continue
+
+                if buy_rows or sell_rows:
+                    columns_buy = ["Sembol", "Sinyal", "Fiyat (Dip)", "Son Fiyat"]
+                    columns_sell = ["Sembol", "Sinyal", "Fiyat (Tepe)", "Son Fiyat"]
+                    df_buy = pd.DataFrame(buy_rows, columns=columns_buy + ["AlarmColor"]) if buy_rows else pd.DataFrame(columns=columns_buy + ["AlarmColor"])
+                    df_sell = pd.DataFrame(sell_rows, columns=columns_sell + ["AlarmColor"]) if sell_rows else pd.DataFrame(columns=columns_sell + ["AlarmColor"])
+                    max_rows = max(len(df_buy), len(df_sell)) if (df_buy.empty or df_sell.empty) else max(len(df_buy), len(df_sell))
+                    combined_rows = []
+                    combined_rows.append([f"📈 AL Sinyali ({now_str})", "", "", "", "", f"📉 SAT Sinyali ({now_str})", "", "", "", ""])
+                    combined_rows.append(columns_buy + [""] + columns_sell + [""])
+                    for i in range(max_rows):
+                        buy_row = df_buy.iloc[i].tolist() if i < len(df_buy) else ["", "", "", "", ""]
+                        sell_row = df_sell.iloc[i].tolist() if i < len(df_sell) else ["", "", "", "", ""]
+                        combined_rows.append(buy_row[:4] + [""] + sell_row[:4] + [""])
+                    df_combined = pd.DataFrame(combined_rows, columns=columns_buy + ["Boş"] + columns_sell + ["Boş"])
+                    df_combined.to_excel(writer, sheet_name=f"{timeframes_tr[tf]}", index=False, header=False)
+                    worksheet = writer.sheets[f"{timeframes_tr[tf]}"]
+                    worksheet.sheet_properties.tabColor = tab_colors.get(timeframes_tr[tf], 'FFFFFF')
+                else:
+                    print(f"[UYARI] {timeframes_tr[tf]} için sinyal bulunamadı.")
+
+        print(f"Toplam sinyal sayısı: {len(buy_rows) + len(sell_rows)}")
+        if any_signals:
+            send_email(excel_file_name)
+            provide_download_link(excel_file_name)
+        else:
+            print("[UYARI] Hiç sinyal bulunmadı, e-posta gönderilmedi.")
+    except Exception as e:
+        print(f"[HATA] Excel dosyası oluşturulurken hata: {e}")
+        raise
 
                 if buy_rows or sell_rows:
                     columns_buy = ["Sembol", "Sinyal", "Fiyat (Dip)", "Son Fiyat"]
