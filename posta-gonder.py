@@ -446,9 +446,10 @@ def provide_download_link(excel_file_name):
 
 # Excel dosyası oluşturma ve biçimlendirme
 def run_analysis():
-    now_file = datetime.now(turkey_tz).strftime("%d-%m-%Y_%H.%M")
-    excel_file_name = f"Dip_Tepe_Tarama_Tum_Zamanlar_{now_file}.xlsx"
-    now = datetime.now(turkey_tz).strftime("%d-%m-%Y %H:%M")
+    now = datetime.now(turkey_tz)
+    if now.weekday() >= 5 or now.hour < 9 or now.hour >= 18:  # Borsa saatleri: 09:00-18:00
+        print(f"[UYARI] Şu an ({now.strftime('%d-%m-%Y %H:%M')}) borsa kapalı. Veri çekilmedi.")
+        return
 
     if datetime.now(turkey_tz).weekday() >= 5:
         print(f"[UYARI] Bugün ({now}) hafta sonu. Borsalar kapalı olabilir, veri çekimi sınırlı olabilir.")
