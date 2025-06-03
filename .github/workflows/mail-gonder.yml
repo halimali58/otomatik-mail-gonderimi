@@ -1,4 +1,4 @@
-name: Otomatik Mail Gönderme
+name: Otomatik Mail Gönderme 
 
 on:
   schedule:
