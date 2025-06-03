@@ -1,4 +1,4 @@
-# Gerekli kütüphaneleri yükleme ve sabit tanımlamalar
+# Gerekli kütüphaneleri yükleme ve sabit tanımlamalar 
 !pip install schedule yfinance pandas numpy openpyxl
 
 import yfinance as yf
