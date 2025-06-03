@@ -437,7 +437,7 @@ def send_email(excel_file_name):
         print(f"✅ {excel_file_name} dosyası {RECIPIENT_EMAIL} adresine başarıyla gönderildi.")
     except Exception as e:
         print(f"⚠️ E-posta gönderilirken hata: {e}")
-        raise  # Hatanın log TLD'ye yazılmasını sağla
+        raise  # Hatanın loglara yazılmasını sağla
 
 # Excel dosyası indirme bağlantısı
 def provide_download_link(excel_file_name):
