@@ -27,7 +27,7 @@ turkey_tz = pytz.timezone('Europe/Istanbul')
 
 # E-posta ayarları
 EMAIL_ADDRESS = "alijak5818@gmail.com"
-EMAIL_PASSWORD = "haqq muwq npuo yfxh"  # Gmail için uygulama özel şifresi
+EMAIL_PASSWORD = "vhzl ezjr dgyx fqto"  # Gmail için uygulama özel şifresi
 RECIPIENT_EMAIL = "halimali58@hotmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
