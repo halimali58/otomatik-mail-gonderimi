@@ -3,6 +3,7 @@ name: Otomatik Mail Gönderme
 on:
   schedule:
     - cron: '0 16 * * 1-5' # Türkiye saatiyle 19:00 (UTC 16:00)
+  workflow_dispatch: # Manuel çalıştırma için
 
 jobs:
   send-mail:
