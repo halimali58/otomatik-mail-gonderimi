@@ -644,15 +644,5 @@ def run_analysis():
     except Exception as e:
         print(f"⚠️ Excel dosyası oluşturulurken hata: {e}")
 
-# Zamanlayıcı
-desired_time = "19:00"
-schedule.every().monday.at(desired_time).do(run_analysis)
-schedule.every().tuesday.at(desired_time).do(run_analysis)
-schedule.every().wednesday.at(desired_time).do(run_analysis)
-schedule.every().thursday.at(desired_time).do(run_analysis)
-schedule.every().friday.at(desired_time).do(run_analysis)
-
-print(f"⏰ Zamanlayıcı başlatılmıştır. Hafta içi her gün saat {desired_time}'da tarama yapılacaktır.")
-
 # Hemen test etmek için
 run_analysis()
