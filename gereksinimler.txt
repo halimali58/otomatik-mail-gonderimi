@@ -1,2 +1,5 @@
-smtplib
-email
+schedule
+yfinance
+pandas
+numpy
+openpyxl
