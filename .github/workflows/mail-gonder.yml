@@ -1,4 +1,4 @@
-name: Otomatik Mail Gönderme 
+name: Otomatik Mail Gönderme
 
 on:
   schedule:
@@ -23,4 +23,4 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-        run: python mail_gonder.py
+        run: python posta_gonder.py
