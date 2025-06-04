@@ -1,6 +1,3 @@
-# Gerekli kütüphaneleri yükleme ve sabit tanımlamalar
-!pip install schedule yfinance pandas numpy openpyxl
-
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -19,7 +16,6 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import colors
 import base64
-from IPython.display import HTML, display
 import sys
 
 # Türkiye saat dilimi
@@ -39,31 +35,15 @@ symbols = [
 
 # Zaman dilimleri ve Türkçe karşılıkları
 timeframes = {
-    '1h': '60d',
-    '2h': '3mo',
-    '4h': '120d',
-    '1d': '1y',
-    '1wk': '3y',
-    '1mo': '10y'
+    '1h': '60d', '2h': '3mo', '4h': '120d', '1d': '1y', '1wk': '3y', '1mo': '10y'
 }
-
 timeframes_tr = {
-    '1h': 'Saatlik',
-    '2h': '2 Saatlik',
-    '4h': '4 Saatlik',
-    '1d': 'Günlük',
-    '1wk': 'Haftalık',
-    '1mo': 'Aylık'
+    '1h': 'Saatlik', '2h': '2 Saatlik', '4h': '4 Saatlik', '1d': 'Günlük', '1wk': 'Haftalık', '1mo': 'Aylık'
 }
 
 # Sekme renkleri
 tab_colors = {
-    'Saatlik': '87CEEB',
-    '2 Saatlik': '98FB98',
-    '4 Saatlik': 'FFFFE0',
-    'Günlük': 'FF9800',
-    'Haftalık': 'E6E6FA',
-    'Aylık': 'FFB6C1'
+    'Saatlik': '87CEEB', '2 Saatlik': '98FB98', '4 Saatlik': 'FFFFE0', 'Günlük': 'FF9800', 'Haftalık': 'E6E6FA', 'Aylık': 'FFB6C1'
 }
 
 # Sinyal doğrulama için çubuk sayıları
@@ -131,11 +111,7 @@ def get_2h_data(symbol, period="3mo"):
             df_1h.columns = df_1h.columns.get_level_values(0)
         df_1h.index = pd.to_datetime(df_1h.index, utc=True).tz_convert('Europe/Istanbul')
         df_2h = df_1h.resample('2h').agg({
-            'Open': 'first',
-            'High': 'max',
-            'Low': 'min',
-            'Close': 'last',
-            'Volume': 'sum'
+            'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
         }).dropna()
         if df_2h.empty:
             print(f"[UYARI] {symbol} için 2 saatlik resample sonrası veri boş.")
@@ -315,7 +291,6 @@ def get_signals(df, minConfirmBars=2, maxConfirmBars=5, prev_al_price=None, prev
     hh1_75 = to_scalar(hh1_75)
     ll2_75 = to_scalar(ll2_75)
 
-    # Yakınlık kontrolü ve alarm için renk bilgisi
     alarm_color = None
     if validAL and not np.isnan(alPrice) and not np.isnan(currClose):
         if currClose <= alPrice * (1 + proximity_threshold):
@@ -369,20 +344,6 @@ def send_email(excel_file_name):
         print(f"✅ {excel_file_name} dosyası {RECIPIENT_EMAIL} adresine başarıyla gönderildi.")
     except Exception as e:
         print(f"⚠️ E-posta gönderilirken hata: {e}")
-
-# Excel dosyası indirme bağlantısı
-def provide_download_link(excel_file_name):
-    try:
-        if 'google.colab' in sys.modules:
-            with open(excel_file_name, 'rb') as f:
-                veri = f.read()
-                b64 = base64.b64encode(veri).decode()
-                href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{excel_file_name}">📥 Excel dosyasını indirmek için tıklayın</a>'
-            display(HTML(href))
-        else:
-            print(f"✅ Excel dosyası oluşturuldu: {excel_file_name}. Lütfen dosya sisteminizden indirin.")
-    except Exception as e:
-        print(f"⚠️ Excel dosyası için indirme bağlantısı oluşturulurken hata: {e}")
 
 # Excel dosyası oluşturma ve biçimlendirme
 def run_analysis():
@@ -491,13 +452,11 @@ def run_analysis():
                     worksheet.cell(row=3, column=14).value = '=IF(K1="","",IFERROR(INDEX(D:D,MATCH(K1,A:A,0)),IFERROR(INDEX(I:I,MATCH(K1,F:F,0)),"")))'
                     worksheet.cell(row=3, column=14).alignment = center_alignment
 
-                    # L3 hücresi için koşullu biçimlendirme
                     green_rule = FormulaRule(formula=['L3="AL"'], fill=light_green_fill)
                     red_rule = FormulaRule(formula=['L3="SAT"'], fill=light_red_fill)
                     worksheet.conditional_formatting.add('L3', green_rule)
                     worksheet.conditional_formatting.add('L3', red_rule)
 
-                    # N3 hücresi için koşullu biçimlendirme
                     green_rule_n3 = FormulaRule(
                         formula=[
                             'AND(L3="AL", K1<>"", N3<>"", VALUE(SUBSTITUTE(N3,",","."))<=VALUE(LEFT(SUBSTITUTE(M3," (",""),FIND(",",SUBSTITUTE(M3," (",""))-1))*1.02)'
@@ -575,7 +534,6 @@ def run_analysis():
 
         print("✅ Excel dosyası başarıyla oluşturuldu.")
         send_email(excel_file_name)
-        provide_download_link(excel_file_name)
     except Exception as e:
         print(f"⚠️ Excel dosyası oluşturulurken hata: {e}")
 
@@ -591,3 +549,8 @@ print(f"⏰ Zamanlayıcı başlatılmıştır. Hafta içi her gün saat {desired
 
 # Hemen test etmek için
 run_analysis()
+
+# Zamanlayıcıyı çalıştırma
+while True:
+    schedule.run_pending()
+    time.sleep(60)
