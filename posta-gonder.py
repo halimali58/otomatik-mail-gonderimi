@@ -1,4 +1,6 @@
-# Gerekli kütüphaneler
+# Gerekli kütüphaneleri yükleme ve sabit tanımlamalar
+!pip install schedule yfinance pandas numpy openpyxl
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -9,33 +11,30 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
+import schedule
+import time
 import os
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles import colors
+import base64
+from IPython.display import HTML, display
 import sys
 
 # Türkiye saat dilimi
 turkey_tz = pytz.timezone('Europe/Istanbul')
 
-# E-posta ayarları (GitHub Actions için secrets kullanılacak)
-EMAIL_ADDRESS = os.getenv('EMAIL_ADDRESS')
-EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
-RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
-
-# Secret'ların varlığını kontrol et
-if not all([EMAIL_ADDRESS, EMAIL_PASSWORD, RECIPIENT_EMAIL]):
-    raise ValueError("E-posta ayarları için gerekli environment değişkenleri eksik (EMAIL_ADDRESS, EMAIL_PASSWORD, RECIPIENT_EMAIL).")
-
+# E-posta ayarları
+EMAIL_ADDRESS = "alijak5818@gmail.com"
+EMAIL_PASSWORD = "xfbc fuvy fonx kbxi"  # Gmail için uygulama özel şifresi
+RECIPIENT_EMAIL = "halimali58@hotmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 # Sembol listesi
 symbols = [
     'A1CAP.IS', 'A1YEN.IS', 'ACSEL.IS', 'ADEL.IS', 'ADESE.IS', 'ADGYO.IS', 'AEFES.IS', 'AFYON.IS', 'AGESA.IS', 'AGHOL.IS',
-    'AGROT.IS', 'AGYO.IS', 'AHGAZ.IS', 'AHSGY.IS', 'AKBNK.IS', 'AKCNS.IS', 'AKENR.IS', 'AKFGY.IS', 'AKFIS.IS', 'AKFYE.IS',
-    # ... (sembol listesinin geri kalanı aynı, yer tasarrufu için buraya tam yazmıyorum)
-    'ZRGYO.IS'
 ]
 
 # Zaman dilimleri ve Türkçe karşılıkları
@@ -124,7 +123,6 @@ def compute_supertrend(df, atr_period=10, factor=3.0, atrline=1.5):
 # 2 saatlik veri çekme
 def get_2h_data(symbol, period="3mo"):
     try:
-        print(f"Veri çekiliyor: {symbol} (2 saatlik)")
         df_1h = yf.download(symbol, period=period, interval="60m", progress=False, auto_adjust=False, timeout=30)
         if df_1h.empty:
             print(f"[UYARI] {symbol} için 1 saatlik veri boş.")
@@ -145,7 +143,6 @@ def get_2h_data(symbol, period="3mo"):
         if len(df_2h) < 10:
             print(f"[UYARI] {symbol} için 2 saatlik veri yetersiz (uzunluk: {len(df_2h)}).")
             return None
-        print(f"2 saatlik veri oluşturuldu: {len(df_2h)} satır")
         return df_2h
     except Exception as e:
         print(f"[HATA] {symbol} 2 saatlik veri alınırken hata: {e}")
@@ -347,7 +344,6 @@ def get_signals(df, minConfirmBars=2, maxConfirmBars=5, prev_al_price=None, prev
 # E-posta gönderme fonksiyonu
 def send_email(excel_file_name):
     try:
-        print(f"E-posta gönderiliyor: {excel_file_name} -> {RECIPIENT_EMAIL}")
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
         msg['To'] = RECIPIENT_EMAIL
@@ -366,38 +362,42 @@ def send_email(excel_file_name):
 
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
-        print("SMTP bağlantısı kuruldu, login deneniyor...")
         server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        print("SMTP login başarılı, e-posta gönderiliyor...")
         text = msg.as_string()
         server.sendmail(EMAIL_ADDRESS, RECIPIENT_EMAIL, text)
         server.quit()
         print(f"✅ {excel_file_name} dosyası {RECIPIENT_EMAIL} adresine başarıyla gönderildi.")
     except Exception as e:
         print(f"⚠️ E-posta gönderilirken hata: {e}")
-        raise
 
 # Excel dosyası indirme bağlantısı
 def provide_download_link(excel_file_name):
-    print(f"✅ Excel dosyası oluşturuldu: {excel_file_name}. GitHub Actions artifact olarak yüklendi.")
+    try:
+        if 'google.colab' in sys.modules:
+            with open(excel_file_name, 'rb') as f:
+                veri = f.read()
+                b64 = base64.b64encode(veri).decode()
+                href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{excel_file_name}">📥 Excel dosyasını indirmek için tıklayın</a>'
+            display(HTML(href))
+        else:
+            print(f"✅ Excel dosyası oluşturuldu: {excel_file_name}. Lütfen dosya sisteminizden indirin.")
+    except Exception as e:
+        print(f"⚠️ Excel dosyası için indirme bağlantısı oluşturulurken hata: {e}")
 
 # Excel dosyası oluşturma ve biçimlendirme
 def run_analysis():
-    now = datetime.now(turkey_tz)
-    if now.weekday() >= 5 or now.hour < 9 or now.hour >= 18:
-        print(f"[UYARI] Şu an ({now.strftime('%d-%m-%Y %H:%M')}) borsa kapalı. İşlem yapılmadı.")
-        return
-
-    now_file = now.strftime("%d-%m-%Y_%H.%M")
+    now_file = datetime.now(turkey_tz).strftime("%d-%m-%Y_%H.%M")
     excel_file_name = f"Dip_Tepe_Tarama_Tum_Zamanlar_{now_file}.xlsx"
-    now_str = now.strftime("%d-%m-%Y %H:%M")
+    now = datetime.now(turkey_tz).strftime("%d-%m-%Y %H:%M")
+
+    if datetime.now(turkey_tz).weekday() >= 5:
+        print(f"[UYARI] Bugün ({now}) hafta sonu. Borsalar kapalı olabilir, veri çekimi sınırlı olabilir.")
 
     any_signals = False
     try:
-        print(f"Excel dosyası oluşturuluyor: {excel_file_name}")
         with pd.ExcelWriter(excel_file_name, engine='openpyxl') as writer:
             for tf, period in timeframes.items():
-                print(f"\n📈 {timeframes_tr[tf]} Zaman Dilimi - SİNYALLER ({now_str})\n")
+                print(f"\n📈 {timeframes_tr[tf]} Zaman Dilimi - SİNYALLER ({now})\n")
                 buy_rows = []
                 sell_rows = []
 
@@ -408,15 +408,21 @@ def run_analysis():
                             df = get_2h_data(sym, period=period)
                         else:
                             df = yf.download(sym, period=period, interval=tf, progress=False, auto_adjust=False, timeout=30)
+
                         if df is None or df.empty or len(df) < 60:
                             print(f"[UYARI] {sym} için yeterli veri yok (uzunluk: {len(df) if df is not None else 0}).")
                             continue
                         df['Symbol'] = sym.replace('.IS', '')
                         df.index = pd.to_datetime(df.index, utc=True).tz_convert('Europe/Istanbul')
+
                         df = compute_supertrend(df, atr_period=10, factor=3.0, atrline=1.5)
-                        prev_al_price, prev_sat_price = get_previous_signals(df, min_confirm_bars, max_confirm_bars)
+
+                        prev_al_price, prev_sat_price = get_previous_signals(df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars)
+
                         buy_signal, sell_signal, buy_row, sell_row, alarm_color = get_signals(
-                            df, min_confirm_bars, max_confirm_bars, prev_al_price, prev_sat_price, proximity_threshold=0.02)
+                            df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars,
+                            prev_al_price=prev_al_price, prev_sat_price=prev_sat_price, proximity_threshold=0.02)
+
                         if buy_row:
                             buy_rows.append(buy_row)
                             print(f"📈 AL Sinyali: {buy_signal}")
@@ -425,25 +431,30 @@ def run_analysis():
                             sell_rows.append(sell_row)
                             print(f"📉 SAT Sinyali: {sell_signal}")
                             any_signals = True
+
                     except Exception as e:
                         print(f"[HATA] {sym} {tf} veri işlenirken hata: {e}")
-                        continue
 
                 if buy_rows or sell_rows:
                     columns_buy = ["Sembol", "Sinyal", "Fiyat (Dip)", "Son Fiyat"]
                     columns_sell = ["Sembol", "Sinyal", "Fiyat (Tepe)", "Son Fiyat"]
                     df_buy = pd.DataFrame(buy_rows, columns=columns_buy + ["AlarmColor"]) if buy_rows else pd.DataFrame(columns=columns_buy + ["AlarmColor"])
                     df_sell = pd.DataFrame(sell_rows, columns=columns_sell + ["AlarmColor"]) if sell_rows else pd.DataFrame(columns=columns_sell + ["AlarmColor"])
+
                     max_rows = max(len(df_buy), len(df_sell)) if (df_buy.empty or df_sell.empty) else max(len(df_buy), len(df_sell))
                     combined_rows = []
-                    combined_rows.append([f"📈 AL Sinyali ({now_str})", "", "", "", "", f"📉 SAT Sinyali ({now_str})", "", "", "", ""])
+
+                    combined_rows.append([f"📈 AL Sinyali ({now})", "", "", "", "", f"📉 SAT Sinyali ({now})", "", "", "", ""])
                     combined_rows.append(columns_buy + [""] + columns_sell + [""])
+
                     for i in range(max_rows):
                         buy_row = df_buy.iloc[i].tolist() if i < len(df_buy) else ["", "", "", "", ""]
                         sell_row = df_sell.iloc[i].tolist() if i < len(df_sell) else ["", "", "", "", ""]
                         combined_rows.append(buy_row[:4] + [""] + sell_row[:4] + [""])
+
                     df_combined = pd.DataFrame(combined_rows, columns=columns_buy + ["Boş"] + columns_sell + ["Boş"])
                     df_combined.to_excel(writer, sheet_name=f"{timeframes_tr[tf]}", index=False, header=False)
+
                     worksheet = writer.sheets[f"{timeframes_tr[tf]}"]
                     worksheet.sheet_properties.tabColor = tab_colors.get(timeframes_tr[tf], 'FFFFFF')
                     bold_font = Font(bold=True)
@@ -480,11 +491,13 @@ def run_analysis():
                     worksheet.cell(row=3, column=14).value = '=IF(K1="","",IFERROR(INDEX(D:D,MATCH(K1,A:A,0)),IFERROR(INDEX(I:I,MATCH(K1,F:F,0)),"")))'
                     worksheet.cell(row=3, column=14).alignment = center_alignment
 
+                    # L3 hücresi için koşullu biçimlendirme
                     green_rule = FormulaRule(formula=['L3="AL"'], fill=light_green_fill)
                     red_rule = FormulaRule(formula=['L3="SAT"'], fill=light_red_fill)
                     worksheet.conditional_formatting.add('L3', green_rule)
                     worksheet.conditional_formatting.add('L3', red_rule)
 
+                    # N3 hücresi için koşullu biçimlendirme
                     green_rule_n3 = FormulaRule(
                         formula=[
                             'AND(L3="AL", K1<>"", N3<>"", VALUE(SUBSTITUTE(N3,",","."))<=VALUE(LEFT(SUBSTITUTE(M3," (",""),FIND(",",SUBSTITUTE(M3," (",""))-1))*1.02)'
@@ -520,9 +533,9 @@ def run_analysis():
                                 cell.alignment = center_alignment
                         else:
                             alarm_color = None
-                            if i - 2 < len(df_buy) and df_buy.iloc[i - 2]['AlarmColor'] == 'green':
+                            if i-2 < len(df_buy) and df_buy.iloc[i-2]['AlarmColor'] == 'green':
                                 alarm_color = light_green_fill
-                            elif i - 2 < len(df_sell) and df_sell.iloc[i - 2]['AlarmColor'] == 'red':
+                            elif i-2 < len(df_sell) and df_sell.iloc[i-2]['AlarmColor'] == 'red':
                                 alarm_color = light_red_fill
                             for col_idx in [1, 2, 3, 4, 6, 7, 8, 9]:
                                 cell = worksheet.cell(row=row_idx, column=col_idx)
@@ -552,17 +565,29 @@ def run_analysis():
                         else:
                             worksheet.column_dimensions[column_letter].width = 15
                 else:
-                    print(f"[UYARI] {timeframes_tr[tf]} için sinyal bulunamadı.")
+                    print(f"{timeframes_tr[tf]} için sinyal bulunamadı.")
 
-        print(f"Toplam sinyal sayısı: {len(buy_rows) + len(sell_rows)}")
-        if any_signals:
-            send_email(excel_file_name)
-            provide_download_link(excel_file_name)
-        else:
-            print("[UYARI] Hiç sinyal bulunmadı, e-posta gönderilmedi.")
+            if not any_signals:
+                print("[UYARI] Hiçbir zaman diliminde sinyal bulunamadı. Boş bir sayfa oluşturuluyor.")
+                columns = ["Bilgi"]
+                df_empty = pd.DataFrame([["Hiçbir sinyal bulunamadı"]], columns=columns)
+                df_empty.to_excel(writer, sheet_name="Bilgi", index=False)
+
+        print("✅ Excel dosyası başarıyla oluşturuldu.")
+        send_email(excel_file_name)
+        provide_download_link(excel_file_name)
     except Exception as e:
-        print(f"[HATA] Excel dosyası oluşturulurken hata: {e}")
-        raise
+        print(f"⚠️ Excel dosyası oluşturulurken hata: {e}")
 
-if __name__ == "__main__":
-    run_analysis()
+# Zamanlayıcı
+desired_time = "19:00"
+schedule.every().monday.at(desired_time).do(run_analysis)
+schedule.every().tuesday.at(desired_time).do(run_analysis)
+schedule.every().wednesday.at(desired_time).do(run_analysis)
+schedule.every().thursday.at(desired_time).do(run_analysis)
+schedule.every().friday.at(desired_time).do(run_analysis)
+
+print(f"⏰ Zamanlayıcı başlatılmıştır. Hafta içi her gün saat {desired_time}'da tarama yapılacaktır.")
+
+# Hemen test etmek için
+run_analysis()
