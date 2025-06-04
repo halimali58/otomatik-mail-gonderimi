@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Depoyu klonla
-        uses: actions/checkout@v4 # Güncel sürüm kullanımı (v3 yerine v4)
+        uses: actions/checkout@v4
 
       - name: Python ortamını kur
-        uses: actions/setup-python@v5 # Güncel sürüm kullanımı (v4 yerine v5)
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -24,6 +24,13 @@ jobs:
 
       - name: Python scriptini çalıştır
         env:
-          # Güvenlik için hassas verileri environment variables ile yönetin
-          EMAIL_CREDENTIALS: ${{ secrets.EMAIL_CREDENTIALS }}
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         run: python posta-gonder.py
+
+      - name: Excel dosyasını artifact olarak yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: dip-tepe-tarama
+          path: Dip_Tepe_Tarama_Tum_Zamanlar_*.xlsx
