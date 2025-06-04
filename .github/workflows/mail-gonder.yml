@@ -2,24 +2,28 @@ name: Otomatik Mail Gönderimi
 
 on:
   schedule:
-    - cron: '0 16 * * 1-5'  # UTC saatine göre: Türkiye saatiyle 19:00 (UTC+3 → 16:00)
-  workflow_dispatch:        # Elle tetiklemek için
+    - cron: '0 16 * * 1-5' # Türkiye saatiyle 19:00 (UTC+3 → 16:00 UTC)
+  workflow_dispatch: # Manuel tetikleme için
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Repo'yu klonla
-      uses: actions/checkout@v3
+      - name: Depoyu klonla
+        uses: actions/checkout@v4 # Güncel sürüm kullanımı (v3 yerine v4)
 
-    - name: Python kurulumu
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Python ortamını kur
+        uses: actions/setup-python@v5 # Güncel sürüm kullanımı (v4 yerine v5)
+        with:
+          python-version: '3.10'
 
-    - name: Bağımlılıkları yükle
-      run: pip install -r requirements.txt
+      - name: Bağımlılıkları yükle
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Python scripti çalıştır
-      run: python posta-gonder.py
+      - name: Python scriptini çalıştır
+        env:
+          # Güvenlik için hassas verileri environment variables ile yönetin
+          EMAIL_CREDENTIALS: ${{ secrets.EMAIL_CREDENTIALS }}
+        run: python posta-gonder.py
