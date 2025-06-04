@@ -24,9 +24,13 @@ import sys
 turkey_tz = pytz.timezone('Europe/Istanbul')
 
 # E-posta ayarları (GitHub Actions için secrets kullanılacak)
-EMAIL_ADDRESS = os.getenv('EMAIL_USER', 'alijak5818@gmail.com')
-EMAIL_PASSWORD = os.getenv('EMAIL_PASS', 'vhzl ezjr dgyx fqto')  # Yerel test için, Actions'da secret kullanılacak
-RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL', 'halimali58@hotmail.com')
+EMAIL_ADDRESS = os.getenv('EMAIL_ADDRESS')
+EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
+RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
+
+# Secret'ların varlığını kontrol et
+if not all([EMAIL_ADDRESS, EMAIL_PASSWORD, RECIPIENT_EMAIL]):
+    raise ValueError("E-posta ayarları için gerekli environment değişkenleri eksik (EMAIL_ADDRESS, EMAIL_PASSWORD, RECIPIENT_EMAIL).")
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
