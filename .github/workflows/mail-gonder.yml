@@ -1,26 +1,25 @@
-name: Colab Kodunu Otomatik Çalıştır
+name: Otomatik Mail Gönderimi
 
 on:
   schedule:
-    - cron: '0 16 * * 1-5'  # UTC saatine göre 19:00 Türkiye saati = 16:00 UTC
-  workflow_dispatch:        # Elle çalıştırmak için de izin verir
+    - cron: '0 16 * * 1-5'  # UTC saatine göre: Türkiye saatiyle 19:00 (UTC+3 → 16:00)
+  workflow_dispatch:        # Elle tetiklemek için
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Repo'yu çek
+    - name: Repo'yu klonla
       uses: actions/checkout@v3
 
-    - name: Python yükle
+    - name: Python kurulumu
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
 
-    - name: Gerekli kütüphaneleri yükle
-      run: |
-        pip install -r requirements.txt || true
+    - name: Bağımlılıkları yükle
+      run: pip install -r requirements.txt
 
-    - name: Python scriptini çalıştır
-      run: python main.py
+    - name: Python scripti çalıştır
+      run: python posta-gonder.py
