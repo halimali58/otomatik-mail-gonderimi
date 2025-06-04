@@ -623,19 +623,4 @@ def run_analysis():
 
 # Zamanlayıcı (yerel test için, GitHub Actions'da kullanılmayacak)
 if __name__ == "__main__":
-    desired_time = "19:00"
-    print(f"⏰ Zamanlayıcı başlatılmıştır. Hafta içi her gün saat {desired_time}'da tarama yapılacaktır.")
-    schedule.every().monday.at(desired_time).do(run_analysis)
-    schedule.every().tuesday.at(desired_time).do(run_analysis)
-    schedule.every().wednesday.at(desired_time).do(run_analysis)
-    schedule.every().thursday.at(desired_time).do(run_analysis)
-    schedule.every().friday.at(desired_time).do(run_analysis)
-
-    # Hemen test etmek için
-    print("⏳ Test çalıştırılıyor...")
     run_analysis()
-
-    # Zamanlayıcı döngüsü (yerel test için)
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
