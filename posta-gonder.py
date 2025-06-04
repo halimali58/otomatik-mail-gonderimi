@@ -30,7 +30,7 @@ SMTP_PORT = 587
 
 # Sembol listesi
 symbols = [
-    'A1CAP.IS', 'A1YEN.IS', 'ACSEL.IS', 'ADEL.IS', 'ADESE.IS', 'ADGYO.IS', 'AEFES.IS', 'AFYON.IS', 'AGESA.IS', 'AGHOL.IS',
+    'A1CAP.IS', 'A1YEN.IS',
 ]
 
 # Zaman dilimleri ve Türkçe karşılıkları
