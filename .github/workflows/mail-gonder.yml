@@ -1,41 +1,26 @@
-name: Otomatik Mail Gönderme
+name: Colab Kodunu Otomatik Çalıştır
 
 on:
   schedule:
-    - cron: '0 16 * * 1-5' # Türkiye saatiyle 19:00 (UTC 16:00)
-  workflow_dispatch: # Manuel çalıştırma için
+    - cron: '0 16 * * 1-5'  # UTC saatine göre 19:00 Türkiye saati = 16:00 UTC
+  workflow_dispatch:        # Elle çalıştırmak için de izin verir
 
 jobs:
-  send-mail:
+  run-script:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Depoyu Çek
-        uses: actions/checkout@v4
-        with:
-          ref: main
+    - name: Repo'yu çek
+      uses: actions/checkout@v3
 
-      - name: Python Ortamını Kur
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: 'pip'
+    - name: Python yükle
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
 
-      - name: Bağımlılıkları Yükle
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt || { echo "Bağımlılık yükleme başarısız!"; exit 1; }
-          else
-            echo "requirements.txt dosyası bulunamadı!"
-            exit 1
-          fi
-          pip list
+    - name: Gerekli kütüphaneleri yükle
+      run: |
+        pip install -r requirements.txt || true
 
-      - name: Python Betiğini Çalıştır
-        env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-        run: |
-          echo "Betik çalıştırılıyor: posta-gonder.py"
-          python posta-gonder.py || { echo "Betik çalıştırılırken hata oluştu!"; exit 1; }
+    - name: Python scriptini çalıştır
+      run: python main.py
