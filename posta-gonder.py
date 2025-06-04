@@ -436,17 +436,7 @@ def send_email(excel_file_name):
 
 # Excel dosyası indirme bağlantısı
 def provide_download_link(excel_file_name):
-    try:
-        if 'google.colab' in sys.modules:
-            with open(excel_file_name, 'rb') as f:
-                veri = f.read()
-                b64 = base64.b64encode(veri).decode()
-                href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{excel_file_name}">📥 Excel dosyasını indirmek için tıklayın</a>'
-            display(HTML(href))
-        else:
-            print(f"✅ Excel dosyası oluşturuldu: {excel_file_name}. Lütfen dosya sisteminizden indirin.")
-    except Exception as e:
-        print(f"⚠️ Excel dosyası için indirme bağlantısı oluşturulurken hata: {e}")
+    print(f"✅ Excel dosyası oluşturuldu: {excel_file_name}. GitHub Actions artifact olarak yüklendi.")
 
 # Excel dosyası oluşturma ve biçimlendirme
 def run_analysis():
