@@ -8,23 +8,21 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-import schedule
-import time
 import os
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import FormulaRule
-from openpyxl.styles import colors
-import base64
-import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+import uuid
 
 # Türkiye saat dilimi
 turkey_tz = pytz.timezone('Europe/Istanbul')
 
-# E-posta ayarları
-EMAIL_ADDRESS = "alijak5818@gmail.com"
-EMAIL_PASSWORD = "xfbc fuvy fonx kbxi"  # Gmail için uygulama özel şifresi
-RECIPIENT_EMAIL = "halimali58@hotmail.com"
+# E-posta ayarları (GitHub Secrets'tan alınıyor)
+EMAIL_ADDRESS = os.getenv('EMAIL_ADDRESS')
+EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
+RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
@@ -173,32 +171,34 @@ def compute_supertrend(df, atr_period=10, factor=3.0, atrline=1.5):
     return df
 
 # 2 saatlik veri çekme
-def get_2h_data(symbol, period="3mo"):
-    try:
-        df_1h = yf.download(symbol, period=period, interval="60m", progress=False, auto_adjust=False, timeout=30)
-        if df_1h.empty:
-            print(f"[UYARI] {symbol} için 1 saatlik veri boş.")
-            return None
-        if isinstance(df_1h.columns, pd.MultiIndex):
-            df_1h.columns = df_1h.columns.get_level_values(0)
-        df_1h.index = pd.to_datetime(df_1h.index, utc=True).tz_convert('Europe/Istanbul')
-        df_2h = df_1h.resample('2h').agg({
-            'Open': 'first',
-            'High': 'max',
-            'Low': 'min',
-            'Close': 'last',
-            'Volume': 'sum'
-        }).dropna()
-        if df_2h.empty:
-            print(f"[UYARI] {symbol} için 2 saatlik resample sonrası veri boş.")
-            return None
-        if len(df_2h) < 10:
-            print(f"[UYARI] {symbol} için 2 saatlik veri yetersiz (uzunluk: {len(df_2h)}).")
-            return None
-        return df_2h
-    except Exception as e:
-        print(f"[HATA] {symbol} 2 saatlik veri alınırken hata: {e}")
-        return None
+def get_2h_data(symbol, period="3mo", retries=3):
+    for attempt in range(retries):
+        try:
+            df_1h = yf.download(symbol, period=period, interval="60m", progress=False, auto_adjust=False, timeout=30)
+            if df_1h.empty:
+                print(f"[UYARI] {symbol} için 1 saatlik veri boş.")
+                return None
+            if isinstance(df_1h.columns, pd.MultiIndex):
+                df_1h.columns = df_1h.columns.get_level_values(0)
+            df_1h.index = pd.to_datetime(df_1h.index, utc=True).tz_convert('Europe/Istanbul')
+            df_2h = df_1h.resample('2h').agg({
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            }).dropna()
+            if df_2h.empty:
+                print(f"[UYARI] {symbol} için 2 saatlik resample sonrası veri boş.")
+                return None
+            if len(df_2h) < 10:
+                print(f"[UYARI] {symbol} için 2 saatlik veri yetersiz (uzunluk: {len(df_2h)}).")
+                return None
+            return df_2h
+        except Exception as e:
+            print(f"[HATA] {symbol} 2 saatlik veri alınırken hata (deneme {attempt+1}/{retries}): {e}")
+            time.sleep(2)
+    return None
 
 # Son mumdan önceki AL ve SAT fiyatlarını bulma
 def get_previous_signals(df, minConfirmBars=2, maxConfirmBars=5):
@@ -297,6 +297,7 @@ def get_signals(df, minConfirmBars=2, maxConfirmBars=5, prev_al_price=None, prev
     last_sell_signal = None
     last_buy_row = None
     last_sell_row = None
+    alarm_color = None
 
     direction = df['direction'].values
     close = df['Close'].values
@@ -368,7 +369,6 @@ def get_signals(df, minConfirmBars=2, maxConfirmBars=5, prev_al_price=None, prev
     ll2_75 = to_scalar(ll2_75)
 
     # Yakınlık kontrolü ve alarm için renk bilgisi
-    alarm_color = None
     if validAL and not np.isnan(alPrice) and not np.isnan(currClose):
         if currClose <= alPrice * (1 + proximity_threshold):
             price_str = f"{alPrice:.2f} ({ll2_75:.2f})".replace('.', ',') if not np.isnan(ll2_75) else f"{alPrice:.2f}".replace('.', ',')
@@ -394,14 +394,14 @@ def get_signals(df, minConfirmBars=2, maxConfirmBars=5, prev_al_price=None, prev
     return last_buy_signal, last_sell_signal, last_buy_row, last_sell_row, alarm_color
 
 # E-posta gönderme fonksiyonu
-def send_email(excel_file_name):
+def send_email(excel_file_name, summary_signals):
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
         msg['To'] = RECIPIENT_EMAIL
         msg['Subject'] = f"Dip Tepe Tarama Sonuçları - {datetime.now(turkey_tz).strftime('%d-%m-%Y %H:%M')}"
 
-        body = "Merhaba,\n\nEkli dosyada dip ve tepe tarama sonuçları bulunmaktadır.\n\nİyi günler,\nOtomatik Tarama Sistemi"
+        body = f"Merhaba,\n\nEkli dosyada dip ve tepe tarama sonuçları bulunmaktadır.\n\nÖnemli Sinyaller:\n{summary_signals}\n\nİyi günler,\nOtomatik Tarama Sistemi"
         msg.attach(MIMEText(body, 'plain'))
 
         with open(excel_file_name, 'rb') as attachment:
@@ -421,6 +421,8 @@ def send_email(excel_file_name):
         print(f"✅ {excel_file_name} dosyası {RECIPIENT_EMAIL} adresine başarıyla gönderildi.")
     except Exception as e:
         print(f"⚠️ E-posta gönderilirken hata: {e}")
+        with open("error_log.txt", "a") as f:
+            f.write(f"[E-posta Hatası] {datetime.now(turkey_tz)}: {e}\n")
 
 # Excel dosyası indirme bağlantısı
 def provide_download_link(excel_file_name):
@@ -428,15 +430,56 @@ def provide_download_link(excel_file_name):
         print(f"✅ Excel dosyası oluşturuldu: {excel_file_name}. Lütfen dosya sisteminizden kontrol edin.")
     except Exception as e:
         print(f"⚠️ Excel dosyası için indirme bağlantısı oluşturulurken hata: {e}")
+        with open("error_log.txt", "a") as f:
+            f.write(f"[Download Link Hatası] {datetime.now(turkey_tz)}: {e}\n")
+
+# Sembol için veri işleme
+def process_symbol(sym, tf, period):
+    error_log = []
+    try:
+        print(f"Veri çekiliyor: {sym} ({timeframes_tr[tf]})")
+        if tf == '2h':
+            df = get_2h_data(sym, period=period)
+        else:
+            df = yf.download(sym, period=period, interval=tf, progress=False, auto_adjust=False, timeout=30)
+
+        if df is None or df.empty or len(df) < 60:
+            error_msg = f"[UYARI] {sym} için yeterli veri yok (uzunluk: {len(df) if df is not None else 0})."
+            print(error_msg)
+            error_log.append(error_msg)
+            return None, None, None, error_log
+
+        df['Symbol'] = sym.replace('.IS', '')
+        df.index = pd.to_datetime(df.index, utc=True).tz_convert('Europe/Istanbul')
+
+        df = compute_supertrend(df, atr_period=10, factor=3.0, atrline=1.5)
+
+        prev_al_price, prev_sat_price = get_previous_signals(df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars)
+
+        buy_signal, sell_signal, buy_row, sell_row, alarm_color = get_signals(
+            df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars,
+            prev_al_price=prev_al_price, prev_sat_price=prev_sat_price, proximity_threshold=0.02)
+
+        return buy_signal, sell_signal, (buy_row, sell_row), error_log
+
+    except Exception as e:
+        error_msg = f"[HATA] {sym} {tf} veri işlenirken hata: {e}"
+        print(error_msg)
+        error_log.append(error_msg)
+        return None, None, None, error_log
 
 # Excel dosyası oluşturma ve biçimlendirme
 def run_analysis():
     now_file = datetime.now(turkey_tz).strftime("%d-%m-%Y_%H.%M")
     excel_file_name = f"Dip_Tepe_Tarama_Tum_Zamanlar_{now_file}.xlsx"
     now = datetime.now(turkey_tz).strftime("%d-%m-%Y %H:%M")
+    error_log = []
+    summary_signals = []
 
     if datetime.now(turkey_tz).weekday() >= 5:
-        print(f"[UYARI] Bugün ({now}) hafta sonu. Borsalar kapalı olabilir, veri çekimi sınırlı olabilir.")
+        error_msg = f"[UYARI] Bugün ({now}) hafta sonu. Borsalar kapalı olabilir, veri çekimi sınırlı olabilir."
+        print(error_msg)
+        error_log.append(error_msg)
 
     any_signals = False
     try:
@@ -446,39 +489,23 @@ def run_analysis():
                 buy_rows = []
                 sell_rows = []
 
-                for sym in symbols:
-                    print(f"Veri çekiliyor: {sym} ({timeframes_tr[tf]})")
-                    try:
-                        if tf == '2h':
-                            df = get_2h_data(sym, period=period)
-                        else:
-                            df = yf.download(sym, period=period, interval=tf, progress=False, auto_adjust=False, timeout=30)
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    results = list(executor.map(lambda sym: process_symbol(sym, tf, period), symbols))
 
-                        if df is None or df.empty or len(df) < 60:
-                            print(f"[UYARI] {sym} için yeterli veri yok (uzunluk: {len(df) if df is not None else 0}).")
-                            continue
-                        df['Symbol'] = sym.replace('.IS', '')
-                        df.index = pd.to_datetime(df.index, utc=True).tz_convert('Europe/Istanbul')
-
-                        df = compute_supertrend(df, atr_period=10, factor=3.0, atrline=1.5)
-
-                        prev_al_price, prev_sat_price = get_previous_signals(df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars)
-
-                        buy_signal, sell_signal, buy_row, sell_row, alarm_color = get_signals(
-                            df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars,
-                            prev_al_price=prev_al_price, prev_sat_price=prev_sat_price, proximity_threshold=0.02)
-
-                        if buy_row:
-                            buy_rows.append(buy_row)
-                            print(f"📈 AL Sinyali: {buy_signal}")
-                            any_signals = True
-                        if sell_row:
-                            sell_rows.append(sell_row)
-                            print(f"📉 SAT Sinyali: {sell_signal}")
-                            any_signals = True
-
-                    except Exception as e:
-                        print(f"[HATA] {sym} {tf} veri işlenirken hata: {e}")
+                for buy_signal, sell_signal, rows, errors in results:
+                    error_log.extend(errors)
+                    if buy_signal and rows[0]:
+                        buy_rows.append(rows[0])
+                        print(f"📈 AL Sinyali: {buy_signal}")
+                        if rows[0][-1] == 'green':
+                            summary_signals.append(f"📈 {buy_signal}")
+                        any_signals = True
+                    if sell_signal and rows[1]:
+                        sell_rows.append(rows[1])
+                        print(f"📉 SAT Sinyali: {sell_signal}")
+                        if rows[1][-1] == 'red':
+                            summary_signals.append(f"📉 {sell_signal}")
+                        any_signals = True
 
                 if buy_rows or sell_rows:
                     columns_buy = ["Sembol", "Sinyal", "Fiyat (Dip)", "Son Fiyat"]
@@ -618,21 +645,21 @@ def run_analysis():
                 df_empty = pd.DataFrame([["Hiçbir sinyal bulunamadı"]], columns=columns)
                 df_empty.to_excel(writer, sheet_name="Bilgi", index=False)
 
+        # Hata logunu kaydet
+        if error_log:
+            with open("error_log.txt", "w") as f:
+                f.write("\n".join(error_log))
+
         print("✅ Excel dosyası başarıyla oluşturuldu.")
-        send_email(excel_file_name)
+        summary_text = "\n".join(summary_signals) if summary_signals else "Yakınlık eşiğine giren sinyal bulunamadı."
+        send_email(excel_file_name, summary_text)
         provide_download_link(excel_file_name)
+
     except Exception as e:
-        print(f"⚠️ Excel dosyası oluşturulurken hata: {e}")
+        error_msg = f"⚠️ Excel dosyası oluşturulurken hata: {e}"
+        print(error_msg)
+        with open("error_log.txt", "a") as f:
+            f.write(f"[Excel Hatası] {datetime.now(turkey_tz)}: {e}\n")
 
-# Zamanlayıcı
-desired_time = "19:00"
-schedule.every().monday.at(desired_time).do(run_analysis)
-schedule.every().tuesday.at(desired_time).do(run_analysis)
-schedule.every().wednesday.at(desired_time).do(run_analysis)
-schedule.every().thursday.at(desired_time).do(run_analysis)
-schedule.every().friday.at(desired_time).do(run_analysis)
-
-print(f"⏰ Zamanlayıcı başlatılmıştır. Hafta içi her gün saat {desired_time}'da tarama yapılacaktır.")
-
-# Hemen test etmek için
-run_analysis()
+if __name__ == "__main__":
+    run_analysis()
