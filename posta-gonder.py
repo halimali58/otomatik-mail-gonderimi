@@ -13,11 +13,10 @@ import time
 import os
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
-from openpyxl.formatting.rule import FormulaRule
 import concurrent.futures
 import logging
-import pickle
 import hashlib
+import pickle
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -55,42 +54,73 @@ CONFIG = {
         'lookback_period': 75
     },
     'schedule_time': "19:00",
-    'cache_dir': "./cache"
+    'cache_dir': "./cache",
+    'max_retries': 2
 }
 
 def get_cache_key(symbol, timeframe, period):
-    """Generate a unique cache key for the data."""
     return hashlib.md5(f"{symbol}_{timeframe}_{period}".encode()).hexdigest()
 
 def load_cached_data(symbol, timeframe, period):
-    """Load cached data if available and not expired."""
     cache_file = os.path.join(CONFIG['cache_dir'], f"{get_cache_key(symbol, timeframe, period)}.pkl")
     if os.path.exists(cache_file):
         with open(cache_file, 'rb') as f:
             timestamp, df = pickle.load(f)
-        if (datetime.now(CONFIG['timezone']) - timestamp).total_seconds() < 3600:  # 1-hour cache
+        if (datetime.now(CONFIG['timezone']) - timestamp).total_seconds() < 3600:
             return df
     return None
 
 def save_cached_data(symbol, timeframe, period, df):
-    """Save data to cache."""
     os.makedirs(CONFIG['cache_dir'], exist_ok=True)
     cache_file = os.path.join(CONFIG['cache_dir'], f"{get_cache_key(symbol, timeframe, period)}.pkl")
     with open(cache_file, 'wb') as f:
         pickle.dump((datetime.now(CONFIG['timezone']), df), f)
 
-def compute_supertrend(df, atr_period, factor, atrline):
-    """Calculate Supertrend indicator."""
+def fetch_data(symbol, timeframe, period):
+    for attempt in range(CONFIG['max_retries'] + 1):
+        try:
+            cached_df = load_cached_data(symbol, timeframe, period)
+            if cached_df is not None:
+                logging.info(f"{symbol} için önbellekten veri alındı.")
+                return cached_df
+
+            if timeframe == '2h':
+                df = yf.download(symbol, period=period, interval="60m", progress=False, auto_adjust=True, timeout=5)
+                if df.empty:
+                    logging.warning(f"{symbol} için 1 saatlik veri boş.")
+                    return None
+                df.index = pd.to_datetime(df.index, utc=True).tz_convert(CONFIG['timezone'])
+                df = df.resample('2h').agg({
+                    'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+                }).dropna()
+            else:
+                df = yf.download(symbol, period=period, interval=timeframe, progress=False, auto_adjust=True, timeout=5)
+                df.index = pd.to_datetime(df.index, utc=True).tz_convert(CONFIG['timezone'])
+
+            if df.empty or len(df) < 60:
+                logging.warning(f"{symbol} için yeterli veri yok (uzunluk: {len(df)}).")
+                return None
+            df['Symbol'] = symbol.replace('.IS', '')
+            save_cached_data(symbol, timeframe, period, df)
+            return df
+        except Exception as e:
+            if attempt == CONFIG['max_retries']:
+                logging.error(f"{symbol} için veri alınamadı (deneme {attempt + 1}/{CONFIG['max_retries'] + 1}): {e}")
+                return None
+            logging.warning(f"{symbol} için deneme {attempt + 1}/{CONFIG['max_retries'] + 1} başarısız: {e}")
+            time.sleep(2 ** attempt)  # Exponential backoff
+
+def compute_supertrend(df):
     df = df.copy()
     df['TR'] = np.maximum.reduce([
         df['High'] - df['Low'],
         (df['High'] - df['Close'].shift()).abs(),
         (df['Low'] - df['Close'].shift()).abs()
     ])
-    df['ATR'] = df['TR'].rolling(window=atr_period).mean()
+    df['ATR'] = df['TR'].rolling(window=CONFIG['supertrend']['atr_period']).mean()
     df['hl2'] = (df['High'] + df['Low']) / 2
-    df['upperband'] = df['hl2'] + factor * df['ATR']
-    df['lowerband'] = df['hl2'] - factor * df['ATR']
+    df['upperband'] = df['hl2'] + CONFIG['supertrend']['factor'] * df['ATR']
+    df['lowerband'] = df['hl2'] - CONFIG['supertrend']['factor'] * df['ATR']
 
     direction = np.zeros(len(df), dtype=int)
     supertrend = np.zeros(len(df))
@@ -117,40 +147,8 @@ def compute_supertrend(df, atr_period, factor, atrline):
     df['direction'] = direction
     return df
 
-def fetch_data(symbol, timeframe, period):
-    """Fetch stock data with caching."""
-    try:
-        cached_df = load_cached_data(symbol, timeframe, period)
-        if cached_df is not None:
-            logging.info(f"{symbol} için önbellekten veri alındı.")
-            return cached_df
-
-        if timeframe == '2h':
-            df = yf.download(symbol, period=period, interval="60m", progress=False, auto_adjust=False, timeout=5)
-            if df.empty:
-                logging.warning(f"{symbol} için 1 saatlik veri boş.")
-                return None
-            df.index = pd.to_datetime(df.index, utc=True).tz_convert(CONFIG['timezone'])
-            df = df.resample('2h').agg({
-                'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
-            }).dropna()
-        else:
-            df = yf.download(symbol, period=period, interval=timeframe, progress=False, auto_adjust=False, timeout=5)
-            df.index = pd.to_datetime(df.index, utc=True).tz_convert(CONFIG['timezone'])
-
-        if df.empty or len(df) < 60:
-            logging.warning(f"{symbol} için yeterli veri yok (uzunluk: {len(df)}).")
-            return None
-        df['Symbol'] = symbol.replace('.IS', '')
-        save_cached_data(symbol, timeframe, period, df)
-        return df
-    except Exception as e:
-        logging.error(f"{symbol} için veri alınırken hata: {e}")
-        return None
-
-def get_signals(df, min_confirm_bars, max_confirm_bars, proximity_threshold, lookback_period):
-    """Generate buy/sell signals."""
-    df = compute_supertrend(df, **CONFIG['supertrend'])
+def get_signals(df):
+    df = compute_supertrend(df)
     direction = df['direction'].values
     close = df['Close'].values
     supertrend = df['supertrend'].values
@@ -168,16 +166,16 @@ def get_signals(df, min_confirm_bars, max_confirm_bars, proximity_threshold, loo
 
     ll2 = np.min(low[int(last_turn_green):]) if not np.isnan(last_turn_green) else np.nan
     hh1 = np.max(high[int(last_turn_red):]) if not np.isnan(last_turn_red) else np.nan
-    ll2_75 = np.min(low[-lookback_period:]) if len(low) >= lookback_period else np.nan
-    hh1_75 = np.max(high[-lookback_period:]) if len(high) >= lookback_period else np.nan
+    ll2_75 = np.min(low[-CONFIG['signal']['lookback_period']:]) if len(low) >= CONFIG['signal']['lookback_period'] else np.nan
+    hh1_75 = np.max(high[-CONFIG['signal']['lookback_period']:]) if len(high) >= CONFIG['signal']['lookback_period'] else np.nan
 
     last_signal = None
-    if not np.isnan(last_turn_green) and min_confirm_bars <= bars_since_green <= max_confirm_bars:
-        confirm_al = all(close[-1 - i] > supertrend[-1 - i] for i in range(min_confirm_bars))
+    if not np.isnan(last_turn_green) and CONFIG['signal']['min_confirm_bars'] <= bars_since_green <= CONFIG['signal']['max_confirm_bars']:
+        confirm_al = all(close[-1 - i] > supertrend[-1 - i] for i in range(CONFIG['signal']['min_confirm_bars']))
         if confirm_al and turn_green[int(last_turn_green)]:
             last_signal = "AL"
-    if not np.isnan(last_turn_red) and min_confirm_bars <= bars_since_red <= max_confirm_bars:
-        confirm_sat = all(close[-1 - i] < supertrend[-1 - i] for i in range(min_confirm_bars))
+    if not np.isnan(last_turn_red) and CONFIG['signal']['min_confirm_bars'] <= bars_since_red <= CONFIG['signal']['max_confirm_bars']:
+        confirm_sat = all(close[-1 - i] < supertrend[-1 - i] for i in range(CONFIG['signal']['min_confirm_bars']))
         if confirm_sat and turn_red[int(last_turn_red)]:
             last_signal = "SAT"
 
@@ -188,19 +186,18 @@ def get_signals(df, min_confirm_bars, max_confirm_bars, proximity_threshold, loo
     if last_signal == "AL" and not np.isnan(ll2):
         price_str = f"{ll2:.2f} ({ll2_75:.2f})".replace('.', ',') if not np.isnan(ll2_75) else f"{ll2:.2f}".replace('.', ',')
         buy_signal = f"{symbol} - AL => {price_str} - Son: {curr_close:.2f}".replace('.', ',')
-        alarm_color = 'green' if curr_close <= ll2 * (1 + proximity_threshold) else None
+        alarm_color = 'green' if curr_close <= ll2 * (1 + CONFIG['signal']['proximity_threshold']) else None
         buy_row = [symbol, "AL", price_str, f"{curr_close:.2f}".replace('.', ','), alarm_color]
 
     if last_signal == "SAT" and not np.isnan(hh1):
         price_str = f"{hh1:.2f} ({hh1_75:.2f})".replace('.', ',') if not np.isnan(hh1_75) else f"{hh1:.2f}".replace('.', ',')
         sell_signal = f"{symbol} - SAT => {price_str} - Son: {curr_close:.2f}".replace('.', ',')
-        alarm_color = 'red' if curr_close >= hh1 * (1 - proximity_threshold) else None
+        alarm_color = 'red' if curr_close >= hh1 * (1 - CONFIG['signal']['proximity_threshold']) else None
         sell_row = [symbol, "SAT", price_str, f"{curr_close:.2f}".replace('.', ','), alarm_color]
 
     return buy_signal, sell_signal, buy_row, sell_row
 
 def send_email(excel_file_name):
-    """Send email with Excel attachment."""
     try:
         msg = MIMEMultipart()
         msg['From'] = CONFIG['email']['address']
@@ -226,9 +223,8 @@ def send_email(excel_file_name):
         logging.error(f"E-posta gönderilirken hata: {e}")
 
 def format_worksheet(worksheet, timeframe_tr, buy_rows, sell_rows, now):
-    """Format Excel worksheet with minimal formatting."""
     bold_font = Font(bold=True)
-    center_alignment = Alignment(horizontal='center', vertical='center')
+    center_alignment = Alignment(horizontal='center')
     light_green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')
     light_red_fill = PatternFill(start_color='FF9999', end_color='FF9999', fill_type='solid')
     hyperlink_font = Font(color="0000FF", underline="single")
@@ -270,7 +266,6 @@ def format_worksheet(worksheet, timeframe_tr, buy_rows, sell_rows, now):
         worksheet.column_dimensions[col_letter].width = 14 if col_idx in [3, 8] else 2 if col_idx in [5, 10] else 10
 
 def run_analysis():
-    """Run the analysis and generate Excel report."""
     now = datetime.now(CONFIG['timezone'])
     excel_file_name = f"Dip_Tepe_Tarama_Tum_Zamanlar_{now.strftime('%d-%m-%Y_%H.%M')}.xlsx"
     any_signals = False
@@ -290,9 +285,10 @@ def run_analysis():
                     sym = future_to_symbol[future]
                     try:
                         df = future.result()
-                        if df is None:
+                        if df is None or not all(col in df.columns for col in ['Open', 'High', 'Low', 'Close']):
+                            logging.warning(f"{sym} için veri eksik veya hatalı.")
                             continue
-                        buy_signal, sell_signal, buy_row, sell_row = get_signals(df, **CONFIG['signal'])
+                        buy_signal, sell_signal, buy_row, sell_row = get_signals(df)
                         if buy_signal:
                             logging.info(f"AL Sinyali: {buy_signal}")
                             buy_rows.append(buy_row)
@@ -315,7 +311,7 @@ def run_analysis():
             logging.warning("Hiçbir sinyal bulunamadı.")
             pd.DataFrame([["Hiçbir sinyal bulunamadı"]], columns=["Bilgi"]).to_excel(writer, sheet_name="Bilgi", index=False)
 
-    if any_signals:
+    if any_signals and os.path.exists(excel_file_name):
         send_email(excel_file_name)
     logging.info("Analiz tamamlandı.")
 
