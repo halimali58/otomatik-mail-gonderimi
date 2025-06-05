@@ -315,4 +315,268 @@ def get_signals(df, minConfirmBars=2, maxConfirmBars=5, prev_al_price=None, prev
     alarm_color = None
     if validAL and not np.isnan(alPrice) and not np.isnan(currClose):
         if currClose <= alPrice * (1 + proximity_threshold):
-            price_str = f"{alPrice:.2f} ({ll2_75:.2f})".replace('.', ',') if not np.isnan(ll2_75) else f"{alSupertrend indikatörünü kullanarak hisse senedi fiyat verilerini analiz eden ve alım/satım sinyalleri üreten bu kod, Borsa İstanbul (BIST) hisseleri için çeşitli zaman dilimlerinde (saatlik, 2 saatlik, 4 saatlik, günlük, haftalık, aylık) tarama yapar. Sonuçları bir Excel dosyasına kaydeder ve belirtilen e-posta adresine gönderir. Ayrıca, haftanın belirli günlerinde (Pazartesi-Cuma) saat 19:00'da otomatik olarak çalışacak şekilde zamanlayıcı içerir.
+            price_str = f"{alPrice:.2f} ({ll2_75:.2f})".replace('.', ',') if not np.isnan(ll2_75) else f"{alPrice:.2f}".replace('.', ',')
+            last_buy_signal = f"{symbol} - AL => {price_str} - Son: {currClose:.2f}".replace('.', ',')
+            last_buy_row = [symbol, "AL", price_str, f"{currClose:.2f}".replace('.', ','), 'green']
+            alarm_color = 'green'
+        else:
+            price_str = f"{alPrice:.2f} ({ll2_75:.2f})".replace('.', ',') if not np.isnan(ll2_75) else f"{alPrice:.2f}".replace('.', ',')
+            last_buy_signal = f"{symbol} - AL => {price_str} - Son: {currClose:.2f}".replace('.', ',')
+            last_buy_row = [symbol, "AL", price_str, f"{currClose:.2f}".replace('.', ','), None]
+
+    if validSAT and not np.isnan(satPrice) and not np.isnan(currClose):
+        if currClose >= satPrice * (1 - proximity_threshold):
+            price_str = f"{satPrice:.2f} ({hh1_75:.2f})".replace('.', ',') if not np.isnan(hh1_75) else f"{satPrice:.2f}".replace('.', ',')
+            last_sell_signal = f"{symbol} - SAT => {price_str} - Son: {currClose:.2f}".replace('.', ',')
+            last_sell_row = [symbol, "SAT", price_str, f"{currClose:.2f}".replace('.', ','), 'red']
+            alarm_color = 'red'
+        else:
+            price_str = f"{satPrice:.2f} ({hh1_75:.2f})".replace('.', ',') if not np.isnan(hh1_75) else f"{satPrice:.2f}".replace('.', ',')
+            last_sell_signal = f"{symbol} - SAT => {price_str} - Son: {currClose:.2f}".replace('.', ',')
+            last_sell_row = [symbol, "SAT", price_str, f"{currClose:.2f}".replace('.', ','), None]
+
+    return last_buy_signal, last_sell_signal, last_buy_row, last_sell_row, alarm_color
+
+# E-posta gönderme fonksiyonu
+def send_email(excel_file_name):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_ADDRESS
+        msg['To'] = RECIPIENT_EMAIL
+        msg['Subject'] = f"Dip Tepe Tarama Sonuçları - {datetime.now(turkey_tz).strftime('%d-%m-%Y %H:%M')}"
+
+        body = "Merhaba,\n\nEkli dosyada dip ve tepe tarama sonuçları bulunmaktadır.\n\nİyi günler,\nOtomatik Tarama Sistemi"
+        msg.attach(MIMEText(body, 'plain'))
+
+        with open(excel_file_name, 'rb') as attachment:
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(attachment.read())
+
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename= {excel_file_name}')
+        msg.attach(part)
+
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(EMAIL_ADDRESS, RECIPIENT_EMAIL, text)
+        server.quit()
+        print(f"✅ {excel_file_name} dosyası {RECIPIENT_EMAIL} adresine başarıyla gönderildi.")
+    except Exception as e:
+        print(f"⚠️ E-posta gönderilirken hata: {e}")
+
+# Excel dosyası indirme bağlantısı
+def provide_download_link(excel_file_name):
+    try:
+        print(f"✅ Excel dosyası oluşturuldu: {excel_file_name}. Lütfen dosya sisteminizden kontrol edin.")
+    except Exception as e:
+        print(f"⚠️ Excel dosyası için indirme bağlantısı oluşturulurken hata: {e}")
+
+# Excel dosyası oluşturma ve biçimlendirme
+def run_analysis():
+    now_file = datetime.now(turkey_tz).strftime("%d-%m-%Y_%H.%M")
+    excel_file_name = f"Dip_Tepe_Tarama_Tum_Zamanlar_{now_file}.xlsx"
+    now = datetime.now(turkey_tz).strftime("%d-%m-%Y %H:%M")
+
+    if datetime.now(turkey_tz).weekday() >= 5:
+        print(f"[UYARI] Bugün ({now}) hafta sonu. Borsalar kapalı olabilir, veri çekimi sınırlı olabilir.")
+
+    any_signals = False
+    try:
+        with pd.ExcelWriter(excel_file_name, engine='openpyxl') as writer:
+            for tf, period in timeframes.items():
+                print(f"\n📈 {timeframes_tr[tf]} Zaman Dilimi - SİNYALLER ({now})\n")
+                buy_rows = []
+                sell_rows = []
+
+                for sym in symbols:
+                    print(f"Veri çekiliyor: {sym} ({timeframes_tr[tf]})")
+                    try:
+                        if tf == '2h':
+                            df = get_2h_data(sym, period=period)
+                        else:
+                            df = yf.download(sym, period=period, interval=tf, progress=False, auto_adjust=False, timeout=30)
+
+                        if df is None or df.empty or len(df) < 60:
+                            print(f"[UYARI] {sym} için yeterli veri yok (uzunluk: {len(df) if df is not None else 0}).")
+                            continue
+                        df['Symbol'] = sym.replace('.IS', '')
+                        df.index = pd.to_datetime(df.index, utc=True).tz_convert('Europe/Istanbul')
+
+                        df = compute_supertrend(df, atr_period=10, factor=3.0, atrline=1.5)
+
+                        prev_al_price, prev_sat_price = get_previous_signals(df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars)
+
+                        buy_signal, sell_signal, buy_row, sell_row, alarm_color = get_signals(
+                            df, minConfirmBars=min_confirm_bars, maxConfirmBars=max_confirm_bars,
+                            prev_al_price=prev_al_price, prev_sat_price=prev_sat_price, proximity_threshold=0.02)
+
+                        if buy_row:
+                            buy_rows.append(buy_row)
+                            print(f"📈 AL Sinyali: {buy_signal}")
+                            any_signals = True
+                        if sell_row:
+                            sell_rows.append(sell_row)
+                            print(f"📉 SAT Sinyali: {sell_signal}")
+                            any_signals = True
+
+                    except Exception as e:
+                        print(f"[HATA] {sym} {tf} veri işlenirken hata: {e}")
+
+                if buy_rows or sell_rows:
+                    columns_buy = ["Sembol", "Sinyal", "Fiyat (Dip)", "Son Fiyat"]
+                    columns_sell = ["Sembol", "Sinyal", "Fiyat (Tepe)", "Son Fiyat"]
+                    df_buy = pd.DataFrame(buy_rows, columns=columns_buy + ["AlarmColor"]) if buy_rows else pd.DataFrame(columns=columns_buy + ["AlarmColor"])
+                    df_sell = pd.DataFrame(sell_rows, columns=columns_sell + ["AlarmColor"]) if sell_rows else pd.DataFrame(columns=columns_sell + ["AlarmColor"])
+
+                    max_rows = max(len(df_buy), len(df_sell)) if (df_buy.empty or df_sell.empty) else max(len(df_buy), len(df_sell))
+                    combined_rows = []
+
+                    combined_rows.append([f"📈 AL Sinyali ({now})", "", "", "", "", f"📉 SAT Sinyali ({now})", "", "", "", ""])
+                    combined_rows.append(columns_buy + [""] + columns_sell + [""])
+
+                    for i in range(max_rows):
+                        buy_row = df_buy.iloc[i].tolist() if i < len(df_buy) else ["", "", "", "", ""]
+                        sell_row = df_sell.iloc[i].tolist() if i < len(df_sell) else ["", "", "", "", ""]
+                        combined_rows.append(buy_row[:4] + [""] + sell_row[:4] + [""])
+
+                    df_combined = pd.DataFrame(combined_rows, columns=columns_buy + ["Boş"] + columns_sell + ["Boş"])
+                    df_combined.to_excel(writer, sheet_name=f"{timeframes_tr[tf]}", index=False, header=False)
+
+                    worksheet = writer.sheets[f"{timeframes_tr[tf]}"]
+                    worksheet.sheet_properties.tabColor = tab_colors.get(timeframes_tr[tf], 'FFFFFF')
+                    bold_font = Font(bold=True)
+                    center_alignment = Alignment(horizontal='center', vertical='center')
+                    light_green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')
+                    light_red_fill = PatternFill(start_color='FF9999', end_color='FF9999', fill_type='solid')
+                    yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+                    hyperlink_font = Font(color="0000FF", underline="single")
+
+                    worksheet.merge_cells(start_row=1, start_column=11, end_row=1, end_column=14)
+                    cell_kl = worksheet.cell(row=1, column=11)
+                    cell_kl.value = ""
+                    cell_kl.alignment = center_alignment
+                    cell_kl.fill = yellow_fill
+
+                    worksheet.cell(row=2, column=11).value = "Sembol"
+                    worksheet.cell(row=2, column=12).value = "Sinyal"
+                    worksheet.cell(row=2, column=13).value = '=IF(L3="SAT","Fiyat (TEPE)",IF(L3="AL","Fiyat (DIP)",IF(L3="","Fiyat","")))'
+                    worksheet.cell(row=2, column=13).alignment = center_alignment
+                    worksheet.cell(row=2, column=14).value = "Son Fiyat"
+
+                    for col_idx in range(11, 15):
+                        cell = worksheet.cell(row=2, column=col_idx)
+                        cell.font = bold_font
+                        cell.alignment = center_alignment
+
+                    worksheet.cell(row=3, column=11).value = '=IF(K1="","",HYPERLINK("https://tr.tradingview.com/chart/?symbol=BIST:"&K1,K1))'
+                    worksheet.cell(row=3, column=11).font = hyperlink_font
+                    worksheet.cell(row=3, column=11).alignment = center_alignment
+                    worksheet.cell(row=3, column=12).value = '=IF(K1="","",IFERROR(INDEX(B:B,MATCH(K1,A:A,0)),IFERROR(INDEX(G:G,MATCH(K1,F:F,0)),"")))'
+                    worksheet.cell(row=3, column=12).alignment = center_alignment
+                    worksheet.cell(row=3, column=13).value = '=IF(K1="","",IFERROR(INDEX(C:C,MATCH(K1,A:A,0)),IFERROR(INDEX(H:H,MATCH(K1,F:F,0)),"")))'
+                    worksheet.cell(row=3, column=13).alignment = center_alignment
+                    worksheet.cell(row=3, column=14).value = '=IF(K1="","",IFERROR(INDEX(D:D,MATCH(K1,A:A,0)),IFERROR(INDEX(I:I,MATCH(K1,F:F,0)),"")))'
+                    worksheet.cell(row=3, column=14).alignment = center_alignment
+
+                    # L3 hücresi için koşullu biçimlendirme
+                    green_rule = FormulaRule(formula=['L3="AL"'], fill=light_green_fill)
+                    red_rule = FormulaRule(formula=['L3="SAT"'], fill=light_red_fill)
+                    worksheet.conditional_formatting.add('L3', green_rule)
+                    worksheet.conditional_formatting.add('L3', red_rule)
+
+                    # N3 hücresi için koşullu biçimlendirme
+                    green_rule_n3 = FormulaRule(
+                        formula=[
+                            'AND(L3="AL", K1<>"", N3<>"", VALUE(SUBSTITUTE(N3,",","."))<=VALUE(LEFT(SUBSTITUTE(M3," (",""),FIND(",",SUBSTITUTE(M3," (",""))-1))*1.02)'
+                        ],
+                        fill=light_green_fill
+                    )
+                    red_rule_n3 = FormulaRule(
+                        formula=[
+                            'AND(L3="SAT", K1<>"", N3<>"", VALUE(SUBSTITUTE(N3,",","."))>=VALUE(LEFT(SUBSTITUTE(M3," (",""),FIND(",",SUBSTITUTE(M3," (",""))-1))*0.98)'
+                        ],
+                        fill=light_red_fill
+                    )
+                    worksheet.conditional_formatting.add('N3', green_rule_n3)
+                    worksheet.conditional_formatting.add('N3', red_rule_n3)
+
+                    row_idx = 1
+                    for i, row in enumerate(combined_rows):
+                        if row[0].startswith("📈") or row[5].startswith("📉"):
+                            worksheet.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=4)
+                            worksheet.merge_cells(start_row=row_idx, start_column=6, end_row=row_idx, end_column=9)
+                            cell_buy = worksheet.cell(row=row_idx, column=1)
+                            cell_sell = worksheet.cell(row=row_idx, column=6)
+                            cell_buy.font = bold_font
+                            cell_sell.font = bold_font
+                            cell_buy.alignment = center_alignment
+                            cell_sell.alignment = center_alignment
+                            cell_buy.fill = light_green_fill
+                            cell_sell.fill = light_red_fill
+                        elif row[:4] == columns_buy and row[5:9] == columns_sell:
+                            for col_idx in [1, 2, 3, 4, 6, 7, 8, 9]:
+                                cell = worksheet.cell(row=row_idx, column=col_idx)
+                                cell.font = bold_font
+                                cell.alignment = center_alignment
+                        else:
+                            alarm_color = None
+                            if i-2 < len(df_buy) and df_buy.iloc[i-2]['AlarmColor'] == 'green':
+                                alarm_color = light_green_fill
+                            elif i-2 < len(df_sell) and df_sell.iloc[i-2]['AlarmColor'] == 'red':
+                                alarm_color = light_red_fill
+                            for col_idx in [1, 2, 3, 4, 6, 7, 8, 9]:
+                                cell = worksheet.cell(row=row_idx, column=col_idx)
+                                cell.alignment = center_alignment
+                                if col_idx == 2 and cell.value == "AL":
+                                    cell.fill = light_green_fill
+                                elif col_idx == 7 and cell.value == "SAT":
+                                    cell.fill = light_red_fill
+                                elif col_idx in [4, 9] and alarm_color:
+                                    if (col_idx == 4 and alarm_color == light_green_fill) or (col_idx == 9 and alarm_color == light_red_fill):
+                                        cell.fill = alarm_color
+                                if col_idx in [1, 6] and cell.value and cell.value != "":
+                                    tradingview_url = f"https://tr.tradingview.com/chart/?symbol=BIST:{cell.value}"
+                                    cell.hyperlink = tradingview_url
+                                    cell.font = hyperlink_font
+                                    cell.value = cell.value
+                        row_idx += 1
+
+                    for col_idx in range(1, 15):
+                        column_letter = get_column_letter(col_idx)
+                        if col_idx in [3, 8, 13]:
+                            worksheet.column_dimensions[column_letter].width = 14.50
+                        elif col_idx in [5, 10]:
+                            worksheet.column_dimensions[column_letter].width = 2
+                        elif col_idx in [1, 2, 4, 6, 7, 9, 11, 12, 14]:
+                            worksheet.column_dimensions[column_letter].width = 10
+                        else:
+                            worksheet.column_dimensions[column_letter].width = 15
+                else:
+                    print(f"{timeframes_tr[tf]} için sinyal bulunamadı.")
+
+            if not any_signals:
+                print("[UYARI] Hiçbir zaman diliminde sinyal bulunamadı. Boş bir sayfa oluşturuluyor.")
+                columns = ["Bilgi"]
+                df_empty = pd.DataFrame([["Hiçbir sinyal bulunamadı"]], columns=columns)
+                df_empty.to_excel(writer, sheet_name="Bilgi", index=False)
+
+        print("✅ Excel dosyası başarıyla oluşturuldu.")
+        send_email(excel_file_name)
+        provide_download_link(excel_file_name)
+    except Exception as e:
+        print(f"⚠️ Excel dosyası oluşturulurken hata: {e}")
+
+# Zamanlayıcı
+desired_time = "19:00"
+schedule.every().monday.at(desired_time).do(run_analysis)
+schedule.every().tuesday.at(desired_time).do(run_analysis)
+schedule.every().wednesday.at(desired_time).do(run_analysis)
+schedule.every().thursday.at(desired_time).do(run_analysis)
+schedule.every().friday.at(desired_time).do(run_analysis)
+
+print(f"⏰ Zamanlayıcı başlatılmıştır. Hafta içi her gün saat {desired_time}'da tarama yapılacaktır.")
+
+# Hemen test etmek için
+run_analysis()
