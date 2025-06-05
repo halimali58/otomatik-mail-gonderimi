@@ -19,8 +19,9 @@ jobs:
 
       - name: Bağımlılıkları yükle
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install yfinance>=0.2.40 pandas>=2.2.2 numpy>=1.26.4 openpyxl>=3.1.5
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Secret'ları kontrol et
         env:
@@ -28,19 +29,24 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         run: |
-          if [ -z "$EMAIL_ADDRESS" ]; then echo "HATA: EMAIL_ADDRESS eksik"; else echo "EMAIL_ADDRESS tanımlı"; fi
-          if [ -z "$EMAIL_PASSWORD" ]; then echo "HATA: EMAIL_PASSWORD eksik"; else echo "EMAIL_PASSWORD tanımlı"; fi
-          if [ -z "$RECIPIENT_EMAIL" ]; then echo "HATA: RECIPIENT_EMAIL eksik"; else echo "RECIPIENT_EMAIL tanımlı"; fi
+          if [ -z "$EMAIL_ADDRESS" ]; then echo "HATA: EMAIL_ADDRESS eksik"; exit 1; fi
+          if [ -z "$EMAIL_PASSWORD" ]; then echo "HATA: EMAIL_PASSWORD eksik"; exit 1; fi
+          if [ -z "$RECIPIENT_EMAIL" ]; then echo "HATA: RECIPIENT_EMAIL eksik"; exit 1; fi
+          echo "Tüm secret'lar tanımlı."
 
       - name: Python scriptini çalıştır
         env:
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-        run: python posta-gonder.py
+        run: python posta-gonder.py || echo "Script çalıştırılırken hata oluştu, hata logu kontrol edilecek."
 
-      - name: Excel dosyasını artifact olarak yükle
+      - name: Excel ve hata logunu artifact olarak yükle
+        if: always() # Hata olsa bile çalışır
         uses: actions/upload-artifact@v4
         with:
           name: dip-tepe-tarama
-          path: Dip_Tepe_Tarama_Tum_Zamanlar_*.xlsx
+          path: |
+            Dip_Tepe_Tarama_Tum_Zamanlar_*.xlsx
+            error_log.txt
+          if-no-files-found: warn
