@@ -16,6 +16,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.formatting.rule import FormulaRule
 import concurrent.futures
 import logging
+import pickle
+import hashlib
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -52,8 +54,30 @@ CONFIG = {
         'proximity_threshold': 0.02,
         'lookback_period': 75
     },
-    'schedule_time': "19:00"
+    'schedule_time': "19:00",
+    'cache_dir': "./cache"
 }
+
+def get_cache_key(symbol, timeframe, period):
+    """Generate a unique cache key for the data."""
+    return hashlib.md5(f"{symbol}_{timeframe}_{period}".encode()).hexdigest()
+
+def load_cached_data(symbol, timeframe, period):
+    """Load cached data if available and not expired."""
+    cache_file = os.path.join(CONFIG['cache_dir'], f"{get_cache_key(symbol, timeframe, period)}.pkl")
+    if os.path.exists(cache_file):
+        with open(cache_file, 'rb') as f:
+            timestamp, df = pickle.load(f)
+        if (datetime.now(CONFIG['timezone']) - timestamp).total_seconds() < 3600:  # 1-hour cache
+            return df
+    return None
+
+def save_cached_data(symbol, timeframe, period, df):
+    """Save data to cache."""
+    os.makedirs(CONFIG['cache_dir'], exist_ok=True)
+    cache_file = os.path.join(CONFIG['cache_dir'], f"{get_cache_key(symbol, timeframe, period)}.pkl")
+    with open(cache_file, 'wb') as f:
+        pickle.dump((datetime.now(CONFIG['timezone']), df), f)
 
 def compute_supertrend(df, atr_period, factor, atrline):
     """Calculate Supertrend indicator."""
@@ -91,15 +115,18 @@ def compute_supertrend(df, atr_period, factor, atrline):
 
     df['supertrend'] = supertrend
     df['direction'] = direction
-    df['upatrline'] = df['supertrend'] + atrline * df['ATR']
-    df['dnatrline'] = df['supertrend'] - atrline * df['ATR']
     return df
 
 def fetch_data(symbol, timeframe, period):
-    """Fetch stock data for a given symbol and timeframe."""
+    """Fetch stock data with caching."""
     try:
+        cached_df = load_cached_data(symbol, timeframe, period)
+        if cached_df is not None:
+            logging.info(f"{symbol} için önbellekten veri alındı.")
+            return cached_df
+
         if timeframe == '2h':
-            df = yf.download(symbol, period=period, interval="60m", progress=False, auto_adjust=False, timeout=10)
+            df = yf.download(symbol, period=period, interval="60m", progress=False, auto_adjust=False, timeout=5)
             if df.empty:
                 logging.warning(f"{symbol} için 1 saatlik veri boş.")
                 return None
@@ -108,20 +135,21 @@ def fetch_data(symbol, timeframe, period):
                 'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
             }).dropna()
         else:
-            df = yf.download(symbol, period=period, interval=timeframe, progress=False, auto_adjust=False, timeout=10)
+            df = yf.download(symbol, period=period, interval=timeframe, progress=False, auto_adjust=False, timeout=5)
             df.index = pd.to_datetime(df.index, utc=True).tz_convert(CONFIG['timezone'])
 
         if df.empty or len(df) < 60:
             logging.warning(f"{symbol} için yeterli veri yok (uzunluk: {len(df)}).")
             return None
         df['Symbol'] = symbol.replace('.IS', '')
+        save_cached_data(symbol, timeframe, period, df)
         return df
     except Exception as e:
         logging.error(f"{symbol} için veri alınırken hata: {e}")
         return None
 
 def get_signals(df, min_confirm_bars, max_confirm_bars, proximity_threshold, lookback_period):
-    """Generate buy/sell signals based on Supertrend."""
+    """Generate buy/sell signals."""
     df = compute_supertrend(df, **CONFIG['supertrend'])
     direction = df['direction'].values
     close = df['Close'].values
@@ -189,28 +217,26 @@ def send_email(excel_file_name):
         part.add_header('Content-Disposition', f'attachment; filename= {excel_file_name}')
         msg.attach(part)
 
-        with smtplib.SMTP(CONFIG['email']['smtp_server'], CONFIG['email']['smtp_port']) as server:
+        with smtplib.SMTP(CONFIG['email']['smtp_server'], CONFIG['email']['smtp_port'], timeout=10) as server:
             server.starttls()
             server.login(CONFIG['email']['address'], CONFIG['email']['password'])
             server.sendmail(CONFIG['email']['address'], CONFIG['email']['recipient'], msg.as_string())
         logging.info(f"E-posta gönderildi: {excel_file_name}")
     except Exception as e:
-        logging.error(f"E-posta gönderilirken hataProperties: {e}")
+        logging.error(f"E-posta gönderilirken hata: {e}")
 
-def format_worksheet(worksheet, timeframes_tr, buy_rows, sell_rows, now):
-    """Format Excel worksheet with signals."""
+def format_worksheet(worksheet, timeframe_tr, buy_rows, sell_rows, now):
+    """Format Excel worksheet with minimal formatting."""
     bold_font = Font(bold=True)
     center_alignment = Alignment(horizontal='center', vertical='center')
     light_green_fill = PatternFill(start_color='90EE90', end_color='90EE90', fill_type='solid')
     light_red_fill = PatternFill(start_color='FF9999', end_color='FF9999', fill_type='solid')
-    yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
     hyperlink_font = Font(color="0000FF", underline="single")
 
-    columns_buy = ["Sembol", "Sinyal", "Fiyat (Dip)", "Son Fiyat"]
-    columns_sell = ["Sembol", "Sinyal", "Fiyat (Tepe)", "Son Fiyat"]
+    columns = ["Sembol", "Sinyal", "Fiyat", "Son Fiyat"]
     combined_rows = [
         [f"📈 AL Sinyali ({now})", "", "", "", "", f"📉 SAT Sinyali ({now})", "", "", "", ""],
-        columns_buy + [""] + columns_sell + [""]
+        columns + [""] + columns + [""]
     ]
     max_rows = max(len(buy_rows), len(sell_rows))
     for i in range(max_rows):
@@ -224,11 +250,8 @@ def format_worksheet(worksheet, timeframes_tr, buy_rows, sell_rows, now):
             cell.value = value
             cell.alignment = center_alignment
             if i == 1:
-                if j <= 4:
-                    cell.fill = light_green_fill
-                elif j >= 6 and j <= 9:
-                    cell.fill = light_red_fill
                 cell.font = bold_font
+                cell.fill = light_green_fill if j <= 4 else light_red_fill if 6 <= j <= 9 else None
             elif i == 2:
                 cell.font = bold_font
             else:
@@ -242,41 +265,9 @@ def format_worksheet(worksheet, timeframes_tr, buy_rows, sell_rows, now):
 
     worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
     worksheet.merge_cells(start_row=1, start_column=6, end_row=1, end_column=9)
-    worksheet.merge_cells(start_row=1, start_column=11, end_row=1, end_column=14)
-    worksheet.cell(row=1, column=11).fill = yellow_fill
-
-    worksheet.cell(row=2, column=11).value = "Sembol"
-    worksheet.cell(row=2, column=12).value = "Sinyal"
-    worksheet.cell(row=2, column=13).value = '=IF(L3="SAT","Fiyat (TEPE)",IF(L3="AL","Fiyat (DIP)",IF(L3="","Fiyat","")))'
-    worksheet.cell(row=2, column=14).value = "Son Fiyat"
-    for col in [11, 12, 13, 14]:
-        worksheet.cell(row=2, column=col).font = bold_font
-        worksheet.cell(row=2, column=col).alignment = center_alignment
-
-    worksheet.cell(row=3, column=11).value = '=IF(K1="","",HYPERLINK("https://tr.tradingview.com/chart/?symbol=BIST:"&K1,K1))'
-    worksheet.cell(row=3, column=11).font = hyperlink_font
-    worksheet.cell(row=3, column=12).value = '=IF(K1="","",IFERROR(INDEX(B:B,MATCH(K1,A:A,0)),IFERROR(INDEX(G:G,MATCH(K1,F:F,0)),"")))'
-    worksheet.cell(row=3, column=13).value = '=IF(K1="","",IFERROR(INDEX(C:C,MATCH(K1,A:A,0)),IFERROR(INDEX(H:H,MATCH(K1,F:F,0)),"")))'
-    worksheet.cell(row=3, column=14).value = '=IF(K1="","",IFERROR(INDEX(D:D,MATCH(K1,A:A,0)),IFERROR(INDEX(I:I,MATCH(K1,F:F,0)),"")))'
-
-    green_rule = FormulaRule(formula=['L3="AL"'], fill=light_green_fill)
-    red_rule = FormulaRule(formula=['L3="SAT"'], fill=light_red_fill)
-    green_rule_n3 = FormulaRule(
-        formula=['AND(L3="AL", K1<>"", N3<>"", VALUE(SUBSTITUTE(N3,",","."))<=VALUE(LEFT(SUBSTITUTE(M3," (",""),FIND(",",SUBSTITUTE(M3," (",""))-1))*1.02)'],
-        fill=light_green_fill
-    )
-    red_rule_n3 = FormulaRule(
-        formula=['AND(L3="SAT", K1<>"", N3<>"", VALUE(SUBSTITUTE(N3,",","."))>=VALUE(LEFT(SUBSTITUTE(M3," (",""),FIND(",",SUBSTITUTE(M3," (",""))-1))*0.98)'],
-        fill=light_red_fill
-    )
-    worksheet.conditional_formatting.add('L3', green_rule)
-    worksheet.conditional_formatting.add('L3', red_rule)
-    worksheet.conditional_formatting.add('N3', green_rule_n3)
-    worksheet.conditional_formatting.add('N3', red_rule_n3)
-
-    for col_idx in range(1, 15):
+    for col_idx in range(1, 11):
         col_letter = get_column_letter(col_idx)
-        worksheet.column_dimensions[col_letter].width = 14.5 if col_idx in [3, 8, 13] else 2 if col_idx in [5, 10] else 10
+        worksheet.column_dimensions[col_letter].width = 14 if col_idx in [3, 8] else 2 if col_idx in [5, 10] else 10
 
 def run_analysis():
     """Run the analysis and generate Excel report."""
@@ -293,7 +284,7 @@ def run_analysis():
             buy_rows = []
             sell_rows = []
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 future_to_symbol = {executor.submit(fetch_data, sym, tf, period): sym for sym in CONFIG['symbols']}
                 for future in concurrent.futures.as_completed(future_to_symbol):
                     sym = future_to_symbol[future]
@@ -336,7 +327,7 @@ if __name__ == "__main__":
     schedule.every().friday.at(CONFIG['schedule_time']).do(run_analysis)
 
     logging.info(f"Zamanlayıcı başlatıldı: Hafta içi {CONFIG['schedule_time']}")
-    run_analysis()  # Run immediately for testing
+    run_analysis()
     while True:
         schedule.run_pending()
         time.sleep(60)
