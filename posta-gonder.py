@@ -19,13 +19,14 @@ from openpyxl.styles import Font, Alignment, PatternFill, colors
 from openpyxl.utils import get_column_letter
 import yfinance as yf
 
+
 # Türkiye saat dilimi
 turkey_tz = pytz.timezone('Europe/Istanbul')
 
 # E-posta ayarları
-EMAIL_ADDRESS = os.getenv('EMAIL_ADDRESS')
-EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
-RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
+EMAIL_ADDRESS = "alijak5818@gmail.com"
+EMAIL_PASSWORD = "xfbc fuvy fonx kbxi"  # Gmail için uygulama özel şifresi
+RECIPIENT_EMAIL = "halimali58@hotmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
@@ -61,7 +62,7 @@ symbols = [
     'ISBIR.IS', 'ISBTR.IS', 'ISCTR.IS', 'ISDMR.IS', 'ISFIN.IS', 'ISGSY.IS', 'ISGYO.IS', 'ISKPL.IS', 'ISMEN.IS', 'ISSEN.IS',
     'IZENR.IS', 'IZFAS.IS', 'IZINV.IS', 'IZMDC.IS', 'JANTS.IS', 'KAPLM.IS', 'KAREL.IS', 'KARSN.IS', 'KARTN.IS', 'KATMR.IS',
     'KAYSE.IS', 'KBORU.IS', 'KCAER.IS', 'KCHOL.IS', 'KENT.IS', 'KERVT.IS', 'KFEIN.IS', 'KGYO.IS', 'KIMMR.IS', 'KLGYO.IS',
-    'KL journalists.IS', 'KLMSN.IS', 'KLNMA.IS', 'KLRHO.IS', 'KLSER.IS', 'KLSYN.IS', 'KLYPV.IS', 'KMPUR.IS', 'KNFRT.IS', 'KOCMT.IS',
+    'KLKIM.IS', 'KLMSN.IS', 'KLNMA.IS', 'KLRHO.IS', 'KLSER.IS', 'KLSYN.IS', 'KLYPV.IS', 'KMPUR.IS', 'KNFRT.IS', 'KOCMT.IS',
     'KONKA.IS', 'KONTR.IS', 'KONYA.IS', 'KOPOL.IS', 'KORDS.IS', 'KOTON.IS', 'KOZAA.IS', 'KOZAL.IS', 'KRDMA.IS', 'KRDMB.IS',
     'KRDMD.IS', 'KRGYO.IS', 'KRONT.IS', 'KRPLS.IS', 'KRSTL.IS', 'KRTEK.IS', 'KRVGD.IS', 'KSTUR.IS', 'KTLEV.IS', 'KTSKR.IS',
     'KUTPO.IS', 'KUYAS.IS', 'KZBGY.IS', 'KZGYO.IS', 'LIDER.IS', 'LIDFA.IS', 'LILAK.IS', 'LINK.IS', 'LKMNH.IS', 'LMKDC.IS',
@@ -625,5 +626,15 @@ def run_analysis():
     except Exception as e:
         print(f"⚠️ Excel dosyası oluşturulurken hata: {e}")
 
-if __name__ == "__main__":
-    run_analysis()
+# Zamanlayıcı
+desired_time = "19:00"
+schedule.every().monday.at(desired_time).do(run_analysis)
+schedule.every().tuesday.at(desired_time).do(run_analysis)
+schedule.every().wednesday.at(desired_time).do(run_analysis)
+schedule.every().thursday.at(desired_time).do(run_analysis)
+schedule.every().friday.at(desired_time).do(run_analysis)
+
+print(f"⏰ Zamanlayıcı başlatılmıştır. Hafta içi her gün saat {desired_time}'da tarama yapılacaktır.")
+
+# Hemen test etmek için
+run_analysis()
