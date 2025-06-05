@@ -97,8 +97,8 @@ def fetch_data(symbol, timeframe, period):
                 df = yf.download(symbol, period=period, interval=timeframe, progress=False, auto_adjust=True, timeout=5)
                 df.index = pd.to_datetime(df.index, utc=True).tz_convert(CONFIG['timezone'])
 
-            if df.empty or len(df) < 60:
-                logging.warning(f"{symbol} için yeterli veri yok (uzunluk: {len(df)}).")
+            if df.empty or len(df) < 60 or not all(col in df.columns for col in ['Open', 'High', 'Low', 'Close']):
+                logging.warning(f"{symbol} için yeterli veya geçerli veri yok (uzunluk: {len(df)}).")
                 return None
             df['Symbol'] = symbol.replace('.IS', '')
             save_cached_data(symbol, timeframe, period, df)
@@ -108,7 +108,7 @@ def fetch_data(symbol, timeframe, period):
                 logging.error(f"{symbol} için veri alınamadı (deneme {attempt + 1}/{CONFIG['max_retries'] + 1}): {e}")
                 return None
             logging.warning(f"{symbol} için deneme {attempt + 1}/{CONFIG['max_retries'] + 1} başarısız: {e}")
-            time.sleep(2 ** attempt)  # Exponential backoff
+            time.sleep(2 ** attempt)
 
 def compute_supertrend(df):
     df = df.copy()
@@ -199,6 +199,9 @@ def get_signals(df):
 
 def send_email(excel_file_name):
     try:
+        if not os.path.exists(excel_file_name):
+            logging.error(f"Excel dosyası bulunamadı: {excel_file_name}")
+            return
         msg = MIMEMultipart()
         msg['From'] = CONFIG['email']['address']
         msg['To'] = CONFIG['email']['recipient']
@@ -211,7 +214,7 @@ def send_email(excel_file_name):
             part = MIMEBase('application', 'octet-stream')
             part.set_payload(attachment.read())
         encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f'attachment; filename= {excel_file_name}')
+        part.add_header('Content-Disposition', f'attachment; filename= {os.path.basename(excel_file_name)}')
         msg.attach(part)
 
         with smtplib.SMTP(CONFIG['email']['smtp_server'], CONFIG['email']['smtp_port'], timeout=10) as server:
@@ -219,8 +222,12 @@ def send_email(excel_file_name):
             server.login(CONFIG['email']['address'], CONFIG['email']['password'])
             server.sendmail(CONFIG['email']['address'], CONFIG['email']['recipient'], msg.as_string())
         logging.info(f"E-posta gönderildi: {excel_file_name}")
+    except smtplib.SMTPAuthenticationError:
+        logging.error("E-posta kimlik doğrulama hatası: Yanlış şifre veya hesap erişimi.")
+    except smtplib.SMTPException as e:
+        logging.error(f"SMTP hatası: {e}")
     except Exception as e:
-        logging.error(f"E-posta gönderilirken hata: {e}")
+        logging.error(f"E-posta gönderilirken beklenmedik hata: {e}")
 
 def format_worksheet(worksheet, timeframe_tr, buy_rows, sell_rows, now):
     bold_font = Font(bold=True)
@@ -311,8 +318,11 @@ def run_analysis():
             logging.warning("Hiçbir sinyal bulunamadı.")
             pd.DataFrame([["Hiçbir sinyal bulunamadı"]], columns=["Bilgi"]).to_excel(writer, sheet_name="Bilgi", index=False)
 
-    if any_signals and os.path.exists(excel_file_name):
+    # Always attempt to send email for debugging, even with no signals
+    if os.path.exists(excel_file_name):
         send_email(excel_file_name)
+    else:
+        logging.error(f"Excel dosyası oluşturulmadı: {excel_file_name}")
     logging.info("Analiz tamamlandı.")
 
 if __name__ == "__main__":
